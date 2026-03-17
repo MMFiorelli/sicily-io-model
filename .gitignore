@@ -1,0 +1,21 @@
+# 1. Ignore EVERYTHING inside the raw data folder (tables, zip files, etc.)
+data/raw/*
+
+# 2. BUT, make an exception to NOT ignore the .gitkeep file!
+!data/raw/.gitkeep
+
+# 3. Ignore legacy processed files:
+data/processed/IO.csv
+data/processed/VA.csv
+data/processed/Y.csv
+data/processed/A.csv
+data/processed/L.csv
+
+# Ignore Jupyter hidden files
+.ipynb_checkpoints/
+
+# Ignore RStudio hidden files
+.Rproj.user/
+.Rhistory
+.RData
+

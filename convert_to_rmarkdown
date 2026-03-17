@@ -1,0 +1,45 @@
+import os
+import subprocess
+import sys
+
+# --- THE FIX IS HERE ---
+# 1. Find exactly where this Python script is saved on your computer
+script_dir = os.path.dirname(os.path.abspath(__file__))
+
+# 2. Force Python to make that specific folder the active working directory
+os.chdir(script_dir)
+# -----------------------
+
+# Define your file names
+notebook_file = "code_v1.ipynb"
+rmarkdown_file = "code_v1.Rmd"
+
+def main():
+    # 1. Convert the Jupyter Notebook to R Markdown
+    print(f"🔄 Converting '{notebook_file}' to '{rmarkdown_file}'...")
+    try:
+        # This runs jupytext in the background to do the conversion
+        subprocess.run(
+            [sys.executable, "-m", "jupytext", "--to", "rmarkdown", notebook_file], 
+            check=True
+        )
+        print("✅ Conversion successful!")
+    except subprocess.CalledProcessError:
+        print("❌ Error during conversion. Is 'jupytext' installed?")
+        sys.exit(1)
+
+    # 2. Open the newly created .Rmd file automatically
+    print("🚀 Opening in RStudio...")
+    try:
+        if os.name == 'nt':  # For Windows
+            # This opens the file using Windows' default application for .Rmd files (which should be RStudio)
+            os.startfile(rmarkdown_file)
+        elif sys.platform == 'darwin':  # For Mac
+            subprocess.run(["open", "-a", "RStudio", rmarkdown_file])
+        else:  # For Linux
+            subprocess.run(["xdg-open", rmarkdown_file])
+    except Exception as e:
+        print(f"❌ Could not open the file automatically: {e}")
+
+if __name__ == "__main__":
+    main()

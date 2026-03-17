@@ -1,0 +1,1303 @@
+---
+jupyter:
+  jupytext:
+    text_representation:
+      extension: .Rmd
+      format_name: rmarkdown
+      format_version: '1.2'
+      jupytext_version: 1.19.1
+  kernelspec:
+    display_name: Python 3
+    language: python
+    name: python3
+---
+
+Regional Input-Output Table Calculator
+
+**Note to Users:** Before running this notebook, please ensure you have installed the required packages listed in the `requirements.txt` file.
+
+- If you are using a Jupyter Notebook environment running python, you should run the following command on your console:
+
+pip install -r requirements.txt
+
+- If you are using an rmarkdown environment, run in your console the following command:
+
+reticulate::py_install(c("numpy", "scipy", "pandas", "matplotlib", "openpyxl", "pyxlsb", "pandasgui"))
+
+- It may take a few minutes
+
+```{python}
+import pandas as pd
+import numpy as np
+import scipy.sparse as sp
+import pyxlsb
+import re
+import os
+```
+
+An example with a small IO table:
+
+```{python}
+# As soon as we have the cleaned dataset, we will be able to perform calculations.
+# 0)
+# First we obtain our IO matrix, the added value matrix and the final demand matrix
+
+IO = np.array([[2, 1, 3],
+              [3, 2, 1],
+              [1, 1, 1]])
+
+VA = np.array([[3, 1, 1],
+               [1, 3, 0]])
+
+Y = np.array([[3, 1],
+              [1 , 1],
+              [2, 1]])
+
+# 1)
+# Then, we compute the gross production value vector (Valor Bruto de Produção - VBP). We basically sum the elements in the IO matrix by lines, and sum the elements in the
+# added value matrix also by lines. As a result, we obtain the transposed vector. 
+
+VBP_T = np.sum(IO, axis=0) + np.sum(VA, axis=0)
+
+
+# 2)
+# Now, we need to compute the coeficient matrix. For that, we need to divided the elements in the first column of the IO matrix by its respective gross production value,
+# which corresponds to the first element of the transposed gross production value vector.
+
+
+A = IO/VBP_T
+
+
+# When we perform a division of a matrix by a line vector, python already repeats the division for each line.
+# It performs the division element by element (i.e. the nth element in a given line of the matrix is divided by the nth element in the line of the vector)
+
+# 3)
+# Then, we create the identity matrix with the same dimension 
+
+I = np.eye(3)
+
+
+# 4)
+# We subtract the identity matrix by the coefficient matrix and invert it.
+
+L = np.linalg.inv(I - A)
+
+# And we are done. 
+
+# 5)
+# We can also multiply the Leontieff inverse matrix by the final demand vector to generate the gross production value vector to check if the calculations
+# were performed correctly:
+
+error_vector = VBP_T - L @ np.sum(Y, axis = 1)
+
+# 6)
+# We can also sum the absolute value of the coordinates of the error vector to obtain a measure of error in the data. They are usually residual and very small, which is the
+# case here:
+
+absolute_sum = np.sum(abs(error_vector))
+
+#############################################################################################################################################################################
+
+# This is just the code to print the result the values of each step:
+
+print('1) Gross production value vector: ')
+print(VBP_T)
+print('')
+print('2) Coefficient matrix: ')
+print(A)
+print('')
+print('3) Identity matrix: ')
+print(I)
+print('')
+print('4) Leontieff inverse matrix')
+print(L)
+print('')
+print('5) Error vector:')
+print(error_vector)
+print('')
+print('6) Absolute sum of the errors:')
+print(absolute_sum)
+```
+
+PART 0:
+
+
+Now we will import our IO-table to the Jupyter environment:
+
+
+Importing the dataframe:
+
+```{python}
+print(os.listdir())
+
+# =======================================================
+# USER INPUT REQUIRED:
+# Change the year below to the year you want to analyze.
+# =======================================================
+
+file_year = "2009"  
+
+# The code will automatically build the file name
+
+file_name = f"RegionalIOtable_{file_year}.xlsb"
+
+file_relative_path = f"data/raw/{file_name}"
+
+print(f"Loading data from {file_name}...")
+
+df = pd.read_excel(
+    file_relative_path,
+    engine="pyxlsb",
+    sheet_name=file_year,
+    header=None,
+)
+print("Data loaded successfully!")
+df
+```
+
+
+Name of the file: 'RegionalIOtable_2009.xlsb'
+
+Name of the sheet: '2009'
+
+
+We separate the bigger dataframe into smaller ones so we can work with each of them individually:
+
+
+```{python}
+# # The IO table data starts on row 4 and ends on row 3732.
+# Column 0 is the index, so we start at column 1. 
+# It ends in column 3730
+
+START_ROW = 3 
+END_ROW = 3732
+START_COL = 1
+END_COL = 3730
+
+tabela_IO = df.iloc[START_ROW:END_ROW, START_COL:END_COL]
+tabela_IO
+```
+
+```{python}
+# # The Y table data starts on row 4 and ends on row 3732.
+# Column 3732 is the end of the IO table, and python starts at the following term.
+# It ends on column 4801.
+
+START_ROW = 3 
+END_ROW = 3732
+START_COL = 3732
+END_COL = 4801
+
+
+tabela_Y = df.iloc[START_ROW:END_ROW, START_COL:END_COL]
+tabela_Y
+```
+
+```{python}
+# # The VA table data starts after the IO table, on row 3735 (so we put 3734) and ends on row 3744.
+# Column 0 is the index, so we start at column 1. 
+# It ends in column 3730
+
+START_ROW = 3734 
+END_ROW = 3744
+START_COL = 1
+END_COL = 3730
+
+tabela_VA = df.iloc[START_ROW:END_ROW, START_COL:END_COL]
+tabela_VA
+```
+
+Notice that the labels of the files are considered as part of the data. We need to fix this, using a multindex for both rows and columns. Creating the multindex for each dataframe
+
+```{python}
+# In the IO table, the first 5 columns and first 5 rows give us two regional codes, a region name, a sector name and a sector name
+
+rscn = ['region1', 'region2', 'region3', 'sector1','sector2'] # regional-sectors' code names
+
+START_ROW = 0 
+END_ROW = 5
+START_COL = 0
+END_COL = 5
+
+# The rows' index start after the 5th row and go to the bottom of the DF. They are the first 5 columns of the DF 
+
+row_IO = pd.MultiIndex.from_frame(
+    tabela_IO.iloc[END_ROW:, START_COL:END_COL], names = rscn
+)
+
+# The columns' index start after the 5th column and go to the extreme right of the DF. They are the first rows of the DF
+
+col_IO = pd.MultiIndex.from_arrays(
+    tabela_IO.iloc[START_ROW:END_ROW, END_COL:].values, names = rscn
+)
+
+# The data starts after the 5h row and after the 5th column:
+
+IO_values = tabela_IO.iloc[END_ROW:, END_COL:].astype(float)
+
+df_IO = pd.DataFrame(
+    IO_values.values,
+    index=row_IO,
+    columns=col_IO
+)
+
+df_IO
+```
+
+```{python}
+# In the Y table, the first 5 columns and first 5 rows give us two regional codes, a region name, a sector name and a sector name
+
+# regional-sectors' code names: rscn = ['region1', 'region2', 'region3', 'sector1','sector2']  
+
+START_ROW = 0 
+END_ROW = 5
+START_COL = 0
+END_COL = 5
+
+# The rows' index start after the 5th row and go to the bottom of the DF. They are the first 5 columns of the DF 
+
+row_Y = pd.MultiIndex.from_frame(
+    tabela_Y.iloc[END_ROW:, START_COL:END_COL], names = rscn
+)
+
+# The columns' index start after the 5th column and go to the extreme right of the DF. They are the first rows of the DF
+
+col_Y = pd.MultiIndex.from_arrays(
+    tabela_Y.iloc[START_ROW:END_ROW, END_COL:].values, names = rscn
+)
+
+# The data starts after the 5h row and after the 5th column:
+
+Y_values = tabela_Y.iloc[END_ROW:, END_COL:].astype(float)
+
+df_Y = pd.DataFrame(
+    Y_values.values,
+    index=row_Y,
+    columns=col_Y
+)
+
+df_Y
+```
+
+```{python}
+# In the VA table, the first three columns are empty, while the fourth gives us a sector code, and the fifth gives us a sector name
+# The first 5 rows give us two regional codes, a region name, a sector name and a sector name
+
+
+# regional-sectors' code names: rscn = ['region1', 'region2', 'region3', 'sector1','sector2']
+rscn1 = ['sector1','sector2'] # sectors' code names
+
+START_ROW = 0 
+END_ROW = 5
+START_COL = 0
+START_COL1 = 3
+END_COL = 5
+
+# The rows' index start after the 5th row and go to the bottom of the DF. They are the columns 4 and 5 of the DF 
+
+
+row_VA = pd.MultiIndex.from_frame(
+    tabela_VA.iloc[END_ROW:, START_COL1:END_COL], names = rscn1
+)
+
+# The columns' index start after the 5th column and go to the extreme right of the DF. They are the first rows of the DF
+
+col_VA = pd.MultiIndex.from_arrays(
+    tabela_VA.iloc[START_ROW:END_ROW, END_COL:].values, names = rscn
+)
+
+# The data starts after the 5h row and after the 5th column:
+
+VA_values = tabela_VA.iloc[END_ROW:, END_COL:].astype(float)
+
+df_VA = pd.DataFrame(
+    VA_values.values,
+    index=row_VA,
+    columns=col_VA
+)
+
+df_VA
+```
+
+Now that we have a dataframe with the correct indexes, we can perform the mathematical operations described at the beginning.
+
+
+PART 1: LEGACY CODE, FOR REFERENCE ONLY!
+
+
+Part 1 is an older approach to the problem, in which we deal with the whole input-output table, in its complete disaggregation. Following parts will deal with an aggregated table for all countries except Italy.
+
+Therefore, we will be dealing with the complete IO matrix, without grouping the intermediary consumption by country and sector. This will give us a bigger Leontieff matrix with much more information. It may be used in the future, but the official data that we shall use is the grouped IO table.
+
+
+Transforming data into Numpy data type, to perform calculations:
+
+```{python}
+IO = df_IO.to_numpy()
+Y = df_Y.to_numpy() 
+VA = df_VA.to_numpy()
+
+IO = np.nan_to_num(IO)
+Y = np.nan_to_num(Y)
+VA = np.nan_to_num(VA)
+```
+
+Technical coefficients matrix:
+
+```{python}
+VBP_T = np.sum(IO, axis=0) + np.sum(VA, axis=0)
+
+A = IO/VBP_T
+```
+
+Identity matrix and Leontieff's inverse matrix:
+
+```{python}
+I = np.eye(A.shape[0])
+L = np.linalg.inv(I - A)
+
+```
+
+Checking values:
+
+```{python}
+Y_s = np.sum(Y, axis = 1) 
+Y_s
+```
+
+```{python}
+# Error vector:
+error = VBP_T - L @ Y_s
+
+# Sum of the errors:
+sum_error = np.sum(error)
+
+# Absolute sum of the errors: 
+sum_error_abs = np.sum(abs(error))
+
+# Print values:
+print(sum_error, sum_error_abs)
+```
+
+Creating a dataframe for the technical coefficients matrix and for the leontieff inverse matrix:
+
+```{python}
+df_A = pd.DataFrame(
+    A,
+    index=row_IO,
+    columns=col_IO
+)
+
+df_L = pd.DataFrame(
+    L,
+    index=row_IO,
+    columns=col_IO
+)
+```
+
+EXPORT DATA FOR PART 1:
+
+In this section you can export the data for each of the tables cleaned and created as a .csv file. Pay attention to the settings used, which is separator is used and decimal, or if either a decimal point or decimal comma is being used. The ideal setting will depend on how your microsoft excel is configured:
+
+
+Export IO table:
+
+```{python}
+# Default settings: , sep = ',', decimal = '.', header = "True", index = "True"
+
+name = "IO.csv"
+
+path = "data/processed/{name}"
+
+df_IO.to_csv(path , sep = ';', decimal = ',', header = "True", index = "True")
+```
+
+Export final demand table:
+
+```{python}
+# Default settings: , sep = ',', decimal = '.', header = "True", index = "True"
+
+name = "Y.csv"
+
+path = "data/processed/{name}"
+
+df_Y.to_csv(path, sep = ';', decimal = ',', header = "True", index = "True")
+```
+
+Export added value table:
+
+```{python}
+# Default settings: , sep = ',', decimal = '.', header = "True", index = "True"
+
+name = "VA.csv"
+
+path = "data/processed/{name}"
+
+df_VA.to_csv(path, sep = ';', decimal = ',', header = "True", index = "True")
+```
+
+Export technical coefficients table:
+
+```{python}
+# Default settings: , sep = ',', decimal = '.', header = "True", index = "True"
+
+name = "A.csv"
+
+path = "data/processed/{name}"
+
+df_A.to_csv(path, sep = ';', decimal = ',', header = "True", index = "True")
+```
+
+Export the Leontieff's table
+
+```{python}
+# Default settings: , sep = ',', decimal = '.', header = "True", index = "True"
+
+name = "L.csv"
+
+path = "data/processed/{name}"
+
+df_L.to_csv(path, sep = ';', decimal = ',', header = "True", index = "True")
+```
+
+PART 2:
+
+
+For this section, we will be reducing the size of the input-output table, final demmand table and added value table. In our tourism dataset, we don't have information from which regions outside of europe each individual is coming from, only from which country. However, we do have the information of how much each tourist spends on each type of expenditure (e.g. housing, restaurants, health services, museums etc.) and in which region of Italy he is spending.
+
+The solution found to this problem was to reduce the whole IO table. For all countries except Italy, we will aggregate all regional-sectors in the table to a single country-level sector. 
+
+For example, if we have a country with just two regions, A and B, we will know from the IO-table that the A-manufacturing industry demands x from the Sicilian-agriculture industry, and the information that the B-manufacturing industry demands y from the same regional-sector. Therefore, in the aggregated table we will have the information that the manufacturing sector from this country demands x+y from the sicilian-agriculture industry. This operation corresponds to summing all columns of the same country and sector. Therefore we perform this operation for all countries except italy.
+
+However, notice that after this first step the information of how much Sicily demands from region A is still mainteined, because we only lost information in the columns. Notice also that we will not lose the information of how much each regional-sector inside Italy provides to each regional-sector inside of Italy, because we are not summing rows and columns for this country.
+
+Likewise, by summing all summing all rows of the same country and sector, we lose the information of how much each regional-sector outside Italy supplies to the Sicilian-agriculture industry. Now, we will only have the information of how much each country supplies to the Sicilian-agriculture sector.
+
+Therefore, our IO table will have four regions: 
+1) Countries except Italy X Countries except Italy: How much each sector from each country supplies to each sector from each country;
+2) Countries except Italy X Regions of Italy: How much each sector from each country supplies to each sector from each region of Italy;
+3) Regions of Italy X Countries except Italy: How much each sector from each region of Italy supplies to each sector from each country;
+4) Regions of Italy X Regions of Italy: How much each sector from each region of Italy supplies to each region of Italy.
+
+Performing this operation to the final demand matrix is analogous. Each component of final demand (consumption, government purchases, capital formation and stock formation) are considered to be different sectors. As we have final demand components for each region in Europe, the operation is exactly the same.
+
+For the added-value matrix, while the columns indicate different regional-sectors, the rows indicate payments to different factors of production (capitalists, workers and government) that composed the final market price. The dataset doesn't specify from which country each factor is (e.g. from which country the workers are from), but we can make the simplifying assumption that they are from the same region as the regional-sector. For this matrix, we should only aggregate the columns, as the data in the rows is already aggregated.
+
+
+First, we make a copy of the original dataframes:
+
+```{python}
+df_IO1 = df_IO.fillna(0)
+df_VA1 = df_VA.fillna(0)
+df_Y1 = df_Y.fillna(0)
+```
+
+In this step we created a function for transforming the sector code from the format "ss1" to just "1":
+
+```{python}
+# Function that transforms the alphanumerical code in numerical in order not to break the ordering of the final dataframe
+def function(data):
+    row = []
+    sector_order = ['ss1', 'ss2','ss3','ss4','ss5','ss6','ss7','ss8','ss9','ss10','ss11','ss12','ss13','ss14','ss15','ss16','ss17','ss18','ss19']
+    for i in data:
+        if i in sector_order:
+            row.append(sector_order.index(i)+1)
+        elif i == 'sp60':
+            row.append(60)
+        elif i == 'sp61':
+            row.append(61)
+        elif i == 'sp62':
+            row.append(62)
+        elif i == 'sp65':
+            row.append(65)
+        else:
+            row.append(99)
+    return row
+```
+
+Now we need to add an index for each country. This will make the grouping process easier:
+
+```{python}
+# Separating the regional code:
+
+row_reg_IO1 = df_IO1.index.get_level_values('region2')
+col_reg_IO1 = df_IO1.columns.get_level_values('region2')
+
+# The first two characters in the string represent the country code
+
+COUNTRY_CODE_END = 2
+
+row_count_IO1 = row_reg_IO1.str[:COUNTRY_CODE_END]
+col_count_IO1 = col_reg_IO1.str[:COUNTRY_CODE_END]
+
+# Applying the function in the sector code
+
+row_sector_IO1 = function(df_IO1.index.get_level_values('sector1'))
+col_sector_IO1 = function(df_IO1.columns.get_level_values('sector1'))
+
+rscn2 = ['country','region1', 'region2', 'region3', 'sector1','sector2'] # regional-sector's code name with country
+
+# Creating a multindex with the country code:
+
+row_IO1 = pd.MultiIndex.from_arrays(
+    [
+        row_count_IO1,
+        df_IO1.index.get_level_values('region1'),
+        df_IO1.index.get_level_values('region2'),
+        df_IO1.index.get_level_values('region3'),
+        row_sector_IO1,
+        df_IO1.index.get_level_values('sector2'),
+    ],
+    names = rscn2
+)
+
+# Creating a multindex for the columns with the country code 
+
+col_IO1 = pd.MultiIndex.from_arrays(
+    [
+        col_count_IO1,
+        df_IO1.columns.get_level_values('region1'),
+        df_IO1.columns.get_level_values('region2'),
+        df_IO1.columns.get_level_values('region3'),
+        col_sector_IO1,
+        df_IO1.columns.get_level_values('sector2'),
+    ],
+    names = rscn2
+)
+
+df_IO2 = pd.DataFrame(
+    df_IO1.values,
+    index=row_IO1,
+    columns=col_IO1
+)
+
+df_IO2
+```
+
+```{python}
+row_reg_Y1 = df_Y1.index.get_level_values('region2')
+col_reg_Y1 = df_Y1.columns.get_level_values('region2')
+
+COUNTRY_CODE_END = 2
+
+row_count_Y1 = row_reg_Y1.str[:COUNTRY_CODE_END]
+col_count_Y1 = col_reg_Y1.str[:COUNTRY_CODE_END]
+
+row_sector_Y1 = function(df_Y1.index.get_level_values('sector1'))
+col_sector_Y1 = function(df_Y1.columns.get_level_values('sector1'))
+
+# regional-sector's code name with country: rscn2 = ['country','region1', 'region2', 'region3', 'sector1','sector2'] 
+
+row_Y1 = pd.MultiIndex.from_arrays(
+    [
+        row_count_Y1,
+        df_Y1.index.get_level_values('region1'),
+        df_Y1.index.get_level_values('region2'),
+        df_Y1.index.get_level_values('region3'),
+        row_sector_Y1,
+        df_Y1.index.get_level_values('sector2'),
+    ],
+    names = rscn2
+)
+
+
+col_Y1 = pd.MultiIndex.from_arrays(
+    [
+        col_count_Y1,
+        df_Y1.columns.get_level_values('region1'),
+        df_Y1.columns.get_level_values('region2'),
+        df_Y1.columns.get_level_values('region3'),
+        col_sector_Y1,
+        df_Y1.columns.get_level_values('sector2'),
+    ],
+    names = rscn2
+)
+
+df_Y2 = pd.DataFrame(
+    df_Y1.values,
+    index=row_Y1,
+    columns=col_Y1)
+
+df_Y2
+```
+
+```{python}
+col_reg_VA1 = df_VA1.columns.get_level_values('region2')
+
+col_count_VA1 = col_reg_VA1.str[:2]
+
+row_sector_VA1 = function(df_VA1.index.get_level_values('sector1'))
+col_sector_VA1 = function(df_VA1.columns.get_level_values('sector1'))
+
+# sectors' code names: rscn1 = ['sector1','sector2'] 
+
+row_VA1 = pd.MultiIndex.from_arrays(
+    [
+        row_sector_VA1,
+        df_VA1.index.get_level_values('sector2')
+    ],
+    names = rscn1
+)
+
+# regional-sector's code name with country: rscn2 = ['country','region1', 'region2', 'region3', 'sector1','sector2'] 
+
+
+col_VA1 = pd.MultiIndex.from_arrays(
+    [
+        col_count_VA1,
+        df_VA1.columns.get_level_values('region1'),
+        df_VA1.columns.get_level_values('region2'),
+        df_VA1.columns.get_level_values('region3'),
+        col_sector_VA1,
+        df_VA1.columns.get_level_values('sector2')
+    ],
+    names = rscn2
+)
+
+df_VA2 = pd.DataFrame(
+    df_VA1.values,
+    index=row_VA1,
+    columns=col_VA1)
+
+df_VA2
+```
+
+Now we group and sum for rows and columns. First we create a dataframe with summed rows (summing all lines with same country and sector, except for Italy) and then we sum the columns of this dataframe (summing all columns with the same country and sector, except for Italy) and store in another new dataframe.
+
+```{python}
+# First we remove from the dataframe the italian regions and we sum all rows with the same country and sector
+
+df_IO_rows_grouped = df_IO2.loc[df_IO2.index.get_level_values('country') != 'IT', ].groupby(level=['country', 'sector1', 'sector2']).sum()
+
+# When we do this, we end losing the regional index. However the italian regions dataframe will have this information. So we should add this information
+# to the dataframe, but as an empty value. That's why our next step should be remaking the multindex:
+
+
+empty_array = np.full(df_IO_rows_grouped.index.get_level_values('country').shape, np.nan)
+
+# regional-sector's code name with country: rscn2 = ['country','region1', 'region2', 'region3', 'sector1','sector2'] 
+
+row_IO_grouped = pd.MultiIndex.from_arrays(
+    [
+        df_IO_rows_grouped.index.get_level_values('country'),
+        empty_array,
+        empty_array,
+        empty_array,
+        df_IO_rows_grouped.index.get_level_values(1),
+        df_IO_rows_grouped.index.get_level_values(2)
+    ],
+    names = rscn2
+)
+
+# And we input this multindex in the intermediary dataframe:
+
+df_IO_rows_grouped = pd.DataFrame(
+    df_IO_rows_grouped.values,
+    index=row_IO_grouped,
+    columns= df_IO_rows_grouped.columns)
+
+
+# Next, we concatenate the italian-regions in the intermediary dataframe:
+
+df_IO_rows_grouped = pd.concat([df_IO_rows_grouped, df_IO2.loc[df_IO2.index.get_level_values('country') == 'IT', ] ], axis = 0)
+
+# As a result we have a dataframe will rows summed by country and sector, except for Italy!
+
+# Now we do the same thing for the columns.
+# For this, we should use the groupby function. However, this function only works vertically. An easy fix for this would be transposing the dataframe, applying the groupby
+# function and transposing the dataframe back:
+
+df_IO_grouped = df_IO_rows_grouped.loc[: , df_IO_rows_grouped.columns.get_level_values('country') != 'IT'].T.groupby(level=['country', 'sector1', 'sector2']).sum().T
+
+# We again add a multindex with empty regional labels:
+
+empty_array = np.full(df_IO_grouped.columns.get_level_values('country').shape, np.nan)
+
+col_IO_grouped = pd.MultiIndex.from_arrays(
+    [
+        df_IO_grouped.columns.get_level_values('country'),
+        empty_array,
+        empty_array,
+        empty_array,
+        df_IO_grouped.columns.get_level_values(1),
+        df_IO_grouped.columns.get_level_values(2)
+    ],
+    names = rscn2
+)
+
+# Joining the multindex to the dataframe
+
+df_IO_grouped = pd.DataFrame(
+    df_IO_grouped.values,
+    index=df_IO_grouped.index,
+    columns= col_IO_grouped)
+
+# And finally we concantenate the columns with Italian regions back on the dataframe!
+
+df_IO_grouped = pd.concat([df_IO_grouped, df_IO_rows_grouped.loc[: , df_IO_rows_grouped.columns.get_level_values('country') == 'IT'] ], axis = 1)
+
+df_IO_grouped
+
+```
+
+```{python}
+# First we remove from the dataframe the italian regions and we sum all rows with the same country and sector
+
+df_Y_rows_grouped = df_Y2.loc[df_Y2.index.get_level_values('country') != 'IT', ].groupby(level=['country', 'sector1', 'sector2']).sum()
+
+# When we do this, we end losing the regional index. However the italian regions dataframe will have this information. So we should add this information
+# to the dataframe, but as an empty value. That's why our next step should be remaking the multindex:
+
+empty_array = np.full(df_Y_rows_grouped.index.get_level_values('country').shape, np.nan)
+
+row_Y_grouped = pd.MultiIndex.from_arrays(
+    [
+        df_Y_rows_grouped.index.get_level_values('country'),
+        empty_array,
+        empty_array,
+        empty_array,
+        df_Y_rows_grouped.index.get_level_values(1),
+        df_Y_rows_grouped.index.get_level_values(2)
+    ],
+    names = ['country','region1', 'region2', 'region3', 'sector1','sector2']
+)
+
+# And we input this multindex in the intermediary dataframe:
+
+df_Y_rows_grouped = pd.DataFrame(
+    df_Y_rows_grouped.values,
+    index=row_Y_grouped,
+    columns= df_Y_rows_grouped.columns)
+
+# Next, we concatenate the italian-regions in the intermediary dataframe:
+
+df_Y_rows_grouped = pd.concat([df_Y_rows_grouped, df_Y2.loc[df_Y2.index.get_level_values('country') == 'IT', ] ], axis = 0)
+
+# As a result we have a dataframe will rows summed by country and sector, except for Italy!
+
+# Now we do the same thing for the columns.
+# For this, we should use the groupby function. However, this function only works vertically. An easy fix for this would be transposing the dataframe, applying the groupby
+# function and transposing the dataframe back:
+
+df_Y_grouped = df_Y_rows_grouped.loc[: , df_Y_rows_grouped.columns.get_level_values('country') != 'IT'].T.groupby(level=['country', 'sector1', 'sector2']).sum().T
+
+# We again add a multindex with empty regional labels:
+
+empty_array = np.full(df_Y_grouped.columns.get_level_values('country').shape, np.nan)
+
+col_Y_grouped = pd.MultiIndex.from_arrays(
+    [
+        df_Y_grouped.columns.get_level_values('country'),
+        empty_array,
+        empty_array,
+        empty_array,
+        df_Y_grouped.columns.get_level_values(1),
+        df_Y_grouped.columns.get_level_values(2)
+    ],
+    names = ['country','region1', 'region2', 'region3', 'sector1','sector2']
+)
+
+# Joining the multindex to the dataframe
+
+df_Y_grouped = pd.DataFrame(
+    df_Y_grouped.values,
+    index=df_Y_grouped.index,
+    columns= col_Y_grouped)
+
+# And finally we concantenate the columns with Italian regions back on the dataframe!
+
+df_Y_grouped = pd.concat([df_Y_grouped, df_Y_rows_grouped.loc[: , df_Y_rows_grouped.columns.get_level_values('country') == 'IT'] ], axis = 1)
+
+df_Y_grouped
+
+```
+
+```{python}
+df_VA_grouped = df_VA2.loc[: , df_VA2.columns.get_level_values('country') != 'IT'].T.groupby(level=['country', 'sector1', 'sector2']).sum().T
+
+# Again we create a multindex with empty values for regions:
+
+empty_array = np.full(df_VA_grouped.columns.get_level_values('country').shape, np.nan)
+
+col_VA_grouped = pd.MultiIndex.from_arrays(
+    [
+        df_VA_grouped.columns.get_level_values('country'),
+        empty_array,
+        empty_array,
+        empty_array,
+        df_VA_grouped.columns.get_level_values(1),
+        df_VA_grouped.columns.get_level_values(2)
+    ],
+    names = ['country','region1', 'region2', 'region3', 'sector1','sector2']
+)
+
+# Joining the multindex to the dataframe:
+
+df_VA_grouped = pd.DataFrame(
+    df_VA_grouped.values,
+    index=df_VA_grouped.index,
+    columns= col_VA_grouped)
+
+# Joining the columns for italian regions to the dataframe:
+
+df_VA_grouped = pd.concat([df_VA_grouped, df_VA2.loc[: , df_VA2.columns.get_level_values('country') == 'IT'] ], axis = 1)
+
+df_VA_grouped
+```
+
+We conclude the grouping process. Now we can perform operations on the new matrices:
+Again, we first transform the dataframes in Numpy arrays:
+
+```{python}
+IOr = df_IO_grouped.to_numpy()
+Yr = df_Y_grouped.to_numpy() 
+VAr = df_VA_grouped.to_numpy()
+```
+
+Technical coefficients matrix:
+
+```{python}
+VBPr_T = np.sum(IOr, axis=0) + np.sum(VAr, axis=0)
+
+Ar = IOr/VBPr_T
+```
+
+Identity matrix and Leontieff's inverse matrix:
+
+```{python}
+Ir = np.eye(Ar.shape[0])
+Lr = np.linalg.inv(Ir - Ar)
+```
+
+Checking values:
+
+```{python}
+Yr_s = np.sum(Yr, axis = 1) 
+Yr_s
+```
+
+```{python}
+error = VBPr_T - Lr @ Yr_s
+sum_error = np.sum(error)
+sum_error_abs = np.sum(abs(error))
+print(sum_error, sum_error_abs)
+```
+
+Creating a dataframe for the technical coefficients matrix and the Leontieff's inverse matrix:
+
+```{python}
+df_Ar = pd.DataFrame(
+    Ar,
+    index=df_IO_grouped.index,
+    columns=df_IO_grouped.columns
+)
+
+df_Lr = pd.DataFrame(
+    Lr,
+    index=df_IO_grouped.index,
+    columns=df_IO_grouped.columns
+)
+```
+
+EXPORT DATA FOR PART 2:
+
+In this section you can export the data for each of the cleaned tables, as well as the new matrices, as a .csv file. Pay attention to the settings used, which separator is being used and decimal, or if either a decimal point or decimal comma is being used. The ideal setting will depend on how your microsoft excel software is configured:
+
+
+Export IO table:
+
+```{python}
+# Default settings: , sep = ',', decimal = '.', header = "True", index = "True"
+
+name = "IOr.csv"
+
+path = "data/processed/{name}"
+
+df_IO_grouped.to_csv(path, sep = ';', decimal = ',', header = "True", index = "True")
+```
+
+Export Added Value Table:
+
+```{python}
+# Default settings: , sep = ',', decimal = '.', header = "True", index = "True"
+
+name = "VAr.csv"
+
+path = "data/processed/{name}"
+
+df_VA_grouped.to_csv(path, sep = ';', decimal = ',', header = "True", index = "True")
+```
+
+Export final demand table:
+
+```{python}
+# Default settings: , sep = ',', decimal = '.', header = "True", index = "True"
+
+name = "Yr.csv"
+
+path = "data/processed/{name}"
+
+df_Y_grouped.to_csv(path, sep = ';', decimal = ',', header = "True", index = "True")
+```
+
+Export Technical Coefficients table:
+
+```{python}
+# Default settings: , sep = ',', decimal = '.', header = "True", index = "True"
+
+name = "Ar.csv"
+
+path = "data/processed/{name}"
+
+df_Ar.to_csv(path, sep = ';', decimal = ',', header = "True", index = "True")
+```
+
+Export Leontieff's table:
+
+```{python}
+# Default settings: , sep = ',', decimal = '.', header = "True", index = "True"
+
+name = "Lr.csv"
+
+path = "data/processed/{name}"
+
+df_Lr.to_csv(path, sep = ';', decimal = ',', header = "True", index = "True")
+```
+
+    Part 3
+
+
+In this section we will be doing the hypothetical extraction of the Sicilian economy. The methodology we will be using will be of nullifying the rows and columns corresponding to the Sicilian sectors in both the technical coefficients matrix (A) and the final demand matrix (y). The economic interpretation is a complete lockdown of the Sicilian economy. Sicily will neither demand intermediate and final products from the other sectors, as it will not provide products to saciate the demand for intermediate and final goods. After that, we compute the Gross Value of Production by Region (GVPR) and Country. But for this numbers to mean anything, we will first need a baseline value for the GVPR. 
+
+
+Baseline: Gross Value of Production by Region
+
+```{python}
+df_VBPr = pd.DataFrame(
+    VBPr_T,
+    index = df_IO_grouped.index
+                       )
+
+df_VBPr_rtotal = df_VBPr.groupby(level = ['country', 'region1', 'region2', 'region3'], dropna = False).sum()
+df_VBPr_rtotal
+```
+
+Zeroing the rows and columns belong to the Sicilian economy in the techinical coefficients matrix and final demand matrix:
+
+```{python}
+df_Ar1 = df_Ar
+
+row = df_Ar1.index.get_level_values('region3') == 'Sicilia'
+col = df_Ar1.columns.get_level_values('region3') == 'Sicilia'
+
+df_Ar1.loc[row, :] = 0
+df_Ar1.loc[:, col] = 0
+
+```
+
+```{python}
+df_Yr1 = df_Y_grouped
+
+row = df_Yr1.index.get_level_values('region3') == 'Sicilia'
+col = df_Yr1.columns.get_level_values('region3') == 'Sicilia'
+
+df_Yr1.loc[row, :] = 0
+df_Yr1.loc[:, col] = 0
+```
+
+```{python}
+Ar1 = df_Ar1.to_numpy()
+Yr1 = df_Yr1.to_numpy()
+```
+
+Generating the Leontieff Inverse Matrix:
+
+```{python}
+Lr1 = np.linalg.inv(Ir - Ar1)
+```
+
+Summing the final demand matrix so it becomes a vector:
+
+```{python}
+Yr1_s = np.sum(Yr1, axis = 1) 
+Yr1_s
+```
+
+Generating the Gross Value of Production vector:
+
+```{python}
+VBPr1 = Lr1 @ Yr1_s
+```
+
+For this new vector, we do the same process that we did at the beggining for the original Gross Value of Production vector:
+
+```{python}
+df_VBPr1 = pd.DataFrame(
+    VBPr1,
+    index = df_IO_grouped.index
+                       )
+
+df_VBPr1_rtotal = df_VBPr1.groupby(level = ['country', 'region1', 'region2', 'region3'], dropna = False).sum()
+df_VBPr1_rtotal
+```
+
+Now we can compute how much each region loss in Gross Value of Production (in percentage):
+
+```{python}
+df_VBPr_pchange = ((df_VBPr1_rtotal - df_VBPr_rtotal)/df_VBPr_rtotal)*100
+```
+
+```{python}
+# Default settings: , sep = ',', decimal = '.', header = "True", index = "True"
+
+name = "HE_Sicilia_" + file_year + "2009.csv" 
+
+path = "data/processed/{name}"
+
+df_VBPr_pchange.to_csv(path, sep = ';', decimal = ',', header = "True", index = "True")
+```
+
+Part 4
+
+
+In this section, we will be constructing a closed model, in order to generate economic growth results for the Sicilian economy.
+
+The main difference is that in the open model (the one we developed before), consumption is considered an exogenous variable, while in the closed model, families are one of the factors of production that enter in the technical coefficients matrix. In both models, we apply a final demand vector (exogenous shock) to the Leontieff matrix and check the impact at the Gross Value of Production vector. From that, we can generate an Added Value vector or change in employment vector.
+
+The main practical implication is that in the open model, we cannot estimate the aggregate GDP impact of an exogenous shock to the final demand. We can only generate impacts on gross value of production, added value, change in employment for each regional sector separately. If we sum all the values at the generated added value vector, it will correspond to the sum of all the values at the original exogenous shock vector. This is basically an accounting identity, the increase in national income corresponds to the increase in aggregate value.
+
+However, in the closed model, as we have a mechanism for an increase in expenditure, in which consumers spend more with an increase in their income (endogenous consumption), we can generate the increase (or decrease if we are removing the sector) in the total GDP. This model better captures the circular flow of money in an economy by making consumption endogenous.
+
+
+To generate results, we will have to make a few additional important assumptions:
+1- Workers hired by a regional sector spend in the same region that they were hired: We make this assumption because we do not have information on the place of origin of the workers. We just have the information of which sector hired them. So we will assume they are all from the region that hired them.
+2- Profits are not disposable income to the families: Profits are an income to the firms, and not to the families. Profits may be retained for future investment, or may be distributed to foreigners. Assuming that they go directly to the families of the region in question would be an unrealistic assumption. As we do not have information on where do profits go, we should treat as a "leakage" of economic system. The same thing goes for international trade margins.
+
+
+We start by generating a consumption matrix, by filtering the final demand dataframe:
+
+```{python}
+mask = df_Y_grouped.columns.get_level_values('sector2') == 'Final_consumption_expenditure_by_households_and_non-profit_org'
+df_Cr = df_Y_grouped.loc[:, mask]
+```
+
+Our technical coefficients matrix needs to be a square matrix. However, while we have a consumption sector for each region, we have only only one workers sector for all region in the EU. We need to segregate the different workers by different regions. Using assumption one, we can generate this matrix, turning the technical coefficients matrix square:
+
+
+Generating the workers compensation matrix:
+
+```{python}
+# First, we extract the compensation of employess vector:
+
+mask = df_VA_grouped.index.get_level_values('sector2') == 'Compensation_of_employees'
+df_Wr = df_VA_grouped.loc[mask, :]
+
+# We now need to generate an index based on country and region for the rows of our new dataframe:
+
+row_reg_VA =  df_Wr.T.index.to_frame(index=False) # We transpose the indexes in column to obtain the regions in the rows
+row_reg_VA  = row_reg_VA.groupby(by = ['country','region1', 'region2','region3'], dropna = False).first() # We group by country and region
+row_reg_VA.loc[:,:] = df_VA_grouped.index.to_frame(index=False).iloc[0,:].T.values # We input the name of the workers sector in the index
+row_reg_VA = row_reg_VA.reset_index() # We transform the data in a dataframe with no indexes
+row_reg_VA = pd.MultiIndex.from_frame(
+    row_reg_VA, names = row_reg_VA.columns.tolist()
+) # Now we create a multi index for the rows
+
+
+# Now, we generate a dataframe filled with zeros, with the correct dimensions:
+
+df_Wr_assumption = pd.DataFrame(
+    0,
+    index= row_reg_VA,
+    columns= df_VA_grouped.columns
+)
+
+# And we fill the dataframe using the values in the vector in the correponding cells:
+
+df_Wr_assumption = df_Wr_assumption.astype(float)
+
+
+# regional-sector's code name with country: rscn2 = ['country','region1', 'region2', 'region3', 'sector1','sector2'] 
+position_list = rscn2.index('region3')
+
+i = 0
+while i < df_Wr_assumption.shape[0]:
+    j = 0
+    while j < df_Wr_assumption.shape[1]:
+        if df_Wr_assumption.index[i][0:position_list] == df_Wr_assumption.columns[j][0:position_list]:
+            df_Wr_assumption.iloc[i,j] = df_Wr.iloc[0,j]
+        j += 1
+    i +=1
+
+# We just need to do a final adjustment: We need to place all the Italy lines in last, because this is the format in which the 
+# consumption matrix is:
+
+df_Wr_assumption = pd.concat([df_Wr_assumption.loc[df_Wr_assumption.index.get_level_values('country') != 'IT', ],
+                            df_Wr_assumption.loc[df_Wr_assumption.index.get_level_values('country') == 'IT', ]], axis = 0)
+
+```
+
+We were able to generate a disaggregation of the workers sectors. Now we can perform the necessary calculations for our model.
+
+
+We start by computing the propensity to consume matrix:
+
+```{python}
+Wr = df_Wr_assumption.to_numpy()
+Cr = df_Cr.to_numpy()
+
+m = Wr.sum(axis=1)
+
+prop_Cr = Cr/m
+
+```
+
+We also compute the technical coefficients of workers:
+
+```{python}
+coef_Wr = Wr/VBPr_T
+```
+
+Now we concatenate the matrices generated to the original technical coefficients matrix.
+
+```{python}
+# However notice the shape of the matrices generated
+print(coef_Wr.shape, prop_Cr.shape)
+# We need to complete the empty spots in the concatenated matrix with a zeros matrix
+
+# Creating the zeros matrix:
+
+zeros = np.zeros((coef_Wr.shape[0], prop_Cr.shape[1]))
+
+# Concatanating to Ar matrix:
+
+Ac = np.concatenate(( np.concatenate((Ar, prop_Cr), axis=1), np.concatenate((coef_Wr, zeros), axis=1) ), axis = 0)
+
+```
+
+Identity matrix and Leontieff's inverse matrix:
+
+```{python}
+Ic = np.eye(Ac.shape[0])
+Lc = np.linalg.inv(Ic - Ac)
+```
+
+Checking the results:
+
+```{python}
+# First we shall remove the aggregate consumption from the final demand vector:
+
+f = np.sum(Yr, axis = 1) - np.sum(Cr, axis =1) 
+
+# However, notice that we have extra lines that need to be filled. The Leontieff inverse matrix is bigger in height than the original 
+# final demand matrix, due to the lines that correspond to the workers sector. As we do not have data on the final demand for autonomous
+# workers' production (the line corresponding to the aggregate value generated from final demand direct to families is empty in the input
+# - output table), we assume it to be zero.
+
+zeros_vector = np.zeros((zeros.shape[0], ))
+
+f = np.concatenate((f , zeros_vector), axis = 0)
+
+# For the gross value of production vector we must do something similar. We must concatenate the wages vector
+
+x = np.concatenate((VBPr_T , m), axis = 0)
+
+# Now we can if the results were computed correctly:
+
+error = x  - Lc @ f
+sum_error = np.sum(error)
+sum_error_abs = np.sum(abs(error))
+print(sum_error, sum_error_abs)
+```
+
+Creating a dataframe for the technical coefficients matrix and for the Leontieff matrix:
+
+```{python}
+row_Ac = pd.concat( (df_Ar.index.to_frame(index=False), row_reg_VA.to_frame(index=False)), axis = 0)
+
+row_Ac = pd.MultiIndex.from_frame(
+    row_Ac, names = row_Ac.columns.to_list()
+)
+
+col_Ac = pd.concat( (df_Ar.columns.to_frame(index=False), df_Cr.columns.to_frame(index=False)), axis = 0)
+
+col_Ac = pd.MultiIndex.from_frame(
+    col_Ac, names = col_Ac.columns.to_list()
+)
+
+df_Ac = pd.DataFrame(
+    Ac,
+    index = row_Ac, 
+    columns= col_Ac
+    )
+
+df_Lc = pd.DataFrame(
+    Lc,
+    index = row_Ac,
+    columns = col_Ac
+)
+```
+
+EXPORT DATA FOR PART 4:
+
+In this section you can export the data for each of the cleaned tables, as well as the new matrices, as a .csv file. Pay attention to the settings used, which separator is being used and decimal, or if either a decimal point or decimal comma is being used. The ideal setting will depend on how your microsoft excel software is configured:
+
+
+Export IO table (this is the same one for Part 2):
+
+```{python}
+# Default settings: , sep = ',', decimal = '.', header = "True", index = "True"
+
+name = "IOr.csv"
+
+path = "data/processed/{name}"
+
+df_IO_grouped.to_csv(path, sep = ';', decimal = ',', header = "True", index = "True")
+```
+
+Export Added Value table (this is the same one for Part 2):
+
+```{python}
+# Default settings: , sep = ',', decimal = '.', header = "True", index = "True"
+
+name = "VAr.csv"
+
+path = "data/processed/{name}"
+
+df_VA_grouped.to_csv(path, sep = ';', decimal = ',', header = "True", index = "True")
+```
+
+Export final demand table (this is the same one for Part 2):
+
+```{python}
+# Default settings: , sep = ',', decimal = '.', header = "True", index = "True"
+
+name = "Yr.csv"
+
+path = "data/processed/{name}"
+
+df_Y_grouped.to_csv(path, sep = ';', decimal = ',', header = "True", index = "True")
+```
+
+Export Technical Coefficients Matrix
+
+```{python}
+# Default settings: , sep = ',', decimal = '.', header = "True", index = "True"
+
+name = "Ac.csv"
+
+path = "data/processed/{name}"
+
+df_Ac.to_csv(path, sep = ';', decimal = ',', header = "True", index = "True")
+```
+
+Export Leontieff inverse matrix
+
+```{python}
+# Default settings: , sep = ',', decimal = '.', header = "True", index = "True"
+
+name = "Lc.csv"
+
+path = "data/processed/{name}"
+
+df_Lc.to_csv(path, sep = ';', decimal = ',', header = "True", index = "True")
+```
