@@ -14,7 +14,7 @@ To run this code locally, you must download the raw data and place it in the cor
 
 *Note: The `data/raw/` folder in this repository contains a `.gitkeep` file to preserve the folder structure. Do not delete this file.*
 
-## 🚀 How to Run the Code
+## How to Run the Code
 
 Once your raw data is securely placed in the `data/raw/` folder, you are ready to generate the matrices.
 
@@ -29,7 +29,7 @@ This pipeline is fully compatible with RStudio via the `reticulate` package.
 1. Open your RStudio console and ensure your Python environment has the necessary packages installed based on the `requirements.txt` file.
 2. Open the notebook file in RStudio and execute the chunks natively.
 
-## 📦 Requirements
+## Requirements
 
 This project requires Python 3.x. All necessary dependencies are listed in the `requirements.txt` file, which includes:
 * `pandas`
