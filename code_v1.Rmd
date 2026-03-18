@@ -407,7 +407,7 @@ Export IO table:
 
 name = "IO.csv"
 
-path = "data/processed/{name}"
+path = f"data/processed/{name}"
 
 df_IO.to_csv(path , sep = ';', decimal = ',', header = "True", index = "True")
 ```
@@ -419,7 +419,7 @@ Export final demand table:
 
 name = "Y.csv"
 
-path = "data/processed/{name}"
+path = f"data/processed/{name}"
 
 df_Y.to_csv(path, sep = ';', decimal = ',', header = "True", index = "True")
 ```
@@ -431,7 +431,7 @@ Export added value table:
 
 name = "VA.csv"
 
-path = "data/processed/{name}"
+path = f"data/processed/{name}"
 
 df_VA.to_csv(path, sep = ';', decimal = ',', header = "True", index = "True")
 ```
@@ -443,7 +443,7 @@ Export technical coefficients table:
 
 name = "A.csv"
 
-path = "data/processed/{name}"
+path = f"data/processed/{name}"
 
 df_A.to_csv(path, sep = ';', decimal = ',', header = "True", index = "True")
 ```
@@ -455,7 +455,7 @@ Export the Leontieff's table
 
 name = "L.csv"
 
-path = "data/processed/{name}"
+path = f"data/processed/{name}"
 
 df_L.to_csv(path, sep = ';', decimal = ',', header = "True", index = "True")
 ```
@@ -873,7 +873,6 @@ Checking values:
 
 ```{python}
 Yr_s = np.sum(Yr, axis = 1) 
-Yr_s
 ```
 
 ```{python}
@@ -911,7 +910,7 @@ Export IO table:
 
 name = "IOr.csv"
 
-path = "data/processed/{name}"
+path = f"data/processed/{name}"
 
 df_IO_grouped.to_csv(path, sep = ';', decimal = ',', header = "True", index = "True")
 ```
@@ -923,7 +922,7 @@ Export Added Value Table:
 
 name = "VAr.csv"
 
-path = "data/processed/{name}"
+path = f"data/processed/{name}"
 
 df_VA_grouped.to_csv(path, sep = ';', decimal = ',', header = "True", index = "True")
 ```
@@ -935,7 +934,7 @@ Export final demand table:
 
 name = "Yr.csv"
 
-path = "data/processed/{name}"
+path = f"data/processed/{name}"
 
 df_Y_grouped.to_csv(path, sep = ';', decimal = ',', header = "True", index = "True")
 ```
@@ -947,7 +946,7 @@ Export Technical Coefficients table:
 
 name = "Ar.csv"
 
-path = "data/processed/{name}"
+path = f"data/processed/{name}"
 
 df_Ar.to_csv(path, sep = ';', decimal = ',', header = "True", index = "True")
 ```
@@ -959,7 +958,7 @@ Export Leontieff's table:
 
 name = "Lr.csv"
 
-path = "data/processed/{name}"
+path = f"data/processed/{name}"
 
 df_Lr.to_csv(path, sep = ';', decimal = ',', header = "True", index = "True")
 ```
@@ -967,7 +966,7 @@ df_Lr.to_csv(path, sep = ';', decimal = ',', header = "True", index = "True")
     Part 3
 
 
-In this section we will be doing the hypothetical extraction of the Sicilian economy. The methodology we will be using will be of nullifying the rows and columns corresponding to the Sicilian sectors in both the technical coefficients matrix (A) and the final demand matrix (y). The economic interpretation is a complete lockdown of the Sicilian economy. Sicily will neither demand intermediate and final products from the other sectors, as it will not provide products to saciate the demand for intermediate and final goods. After that, we compute the Gross Value of Production by Region (GVPR) and Country. But for this numbers to mean anything, we will first need a baseline value for the GVPR. 
+In this section we will be doing the hypothetical extraction of the Sicilian economy. In this methodology, we will be nullifying the rows and columns corresponding to the Sicilian sectors in both the technical coefficients matrix (A) and the final demand matrix (y). The economic interpretation is a complete lockdown of the Sicilian economy. Sicily will neither demand intermediate and final products from the other sectors, as it will not provide products to saciate the demand for intermediate and final goods. After that, we compute the Gross Value of Production by Region (GVPR) and Country. But for this numbers to mean anything, we will first need a baseline value for the GVPR. 
 
 
 Baseline: Gross Value of Production by Region
@@ -982,13 +981,23 @@ df_VBPr_rtotal = df_VBPr.groupby(level = ['country', 'region1', 'region2', 'regi
 df_VBPr_rtotal
 ```
 
-Zeroing the rows and columns belong to the Sicilian economy in the techinical coefficients matrix and final demand matrix:
+Here, we simply create a list with all Italian regions:
+
+```{python}
+regions_italy = df_VBPr_rtotal.loc['IT',:].index.to_frame(index = False).loc[:,'region3'].to_list()
+
+print(regions_italy)
+```
+
+Zeroing the rows and columns that belong to the Sicilian economy in the techinical coefficients matrix and final demand matrix:
 
 ```{python}
 df_Ar1 = df_Ar
 
-row = df_Ar1.index.get_level_values('region3') == 'Sicilia'
-col = df_Ar1.columns.get_level_values('region3') == 'Sicilia'
+print(regions_italy[-2])
+
+row = df_Ar1.index.get_level_values('region3') == regions_italy[-2]
+col = df_Ar1.columns.get_level_values('region3') == regions_italy[-2]
 
 df_Ar1.loc[row, :] = 0
 df_Ar1.loc[:, col] = 0
@@ -998,8 +1007,8 @@ df_Ar1.loc[:, col] = 0
 ```{python}
 df_Yr1 = df_Y_grouped
 
-row = df_Yr1.index.get_level_values('region3') == 'Sicilia'
-col = df_Yr1.columns.get_level_values('region3') == 'Sicilia'
+row = df_Yr1.index.get_level_values('region3') == regions_italy[-2]
+col = df_Yr1.columns.get_level_values('region3') == regions_italy[-2]
 
 df_Yr1.loc[row, :] = 0
 df_Yr1.loc[:, col] = 0
@@ -1020,7 +1029,6 @@ Summing the final demand matrix so it becomes a vector:
 
 ```{python}
 Yr1_s = np.sum(Yr1, axis = 1) 
-Yr1_s
 ```
 
 Generating the Gross Value of Production vector:
@@ -1050,9 +1058,9 @@ df_VBPr_pchange = ((df_VBPr1_rtotal - df_VBPr_rtotal)/df_VBPr_rtotal)*100
 ```{python}
 # Default settings: , sep = ',', decimal = '.', header = "True", index = "True"
 
-name = "HE_Sicilia_" + file_year + "2009.csv" 
+name = "HE_Sicilia_" + file_year + ".csv" 
 
-path = "data/processed/{name}"
+path = f"data/processed/{name}"
 
 df_VBPr_pchange.to_csv(path, sep = ';', decimal = ',', header = "True", index = "True")
 ```
@@ -1249,7 +1257,7 @@ Export IO table (this is the same one for Part 2):
 
 name = "IOr.csv"
 
-path = "data/processed/{name}"
+path = f"data/processed/{name}"
 
 df_IO_grouped.to_csv(path, sep = ';', decimal = ',', header = "True", index = "True")
 ```
@@ -1261,7 +1269,7 @@ Export Added Value table (this is the same one for Part 2):
 
 name = "VAr.csv"
 
-path = "data/processed/{name}"
+path = f"data/processed/{name}"
 
 df_VA_grouped.to_csv(path, sep = ';', decimal = ',', header = "True", index = "True")
 ```
@@ -1273,7 +1281,7 @@ Export final demand table (this is the same one for Part 2):
 
 name = "Yr.csv"
 
-path = "data/processed/{name}"
+path = f"data/processed/{name}"
 
 df_Y_grouped.to_csv(path, sep = ';', decimal = ',', header = "True", index = "True")
 ```
@@ -1285,7 +1293,7 @@ Export Technical Coefficients Matrix
 
 name = "Ac.csv"
 
-path = "data/processed/{name}"
+path = f"data/processed/{name}"
 
 df_Ac.to_csv(path, sep = ';', decimal = ',', header = "True", index = "True")
 ```
@@ -1297,7 +1305,7 @@ Export Leontieff inverse matrix
 
 name = "Lc.csv"
 
-path = "data/processed/{name}"
+path = f"data/processed/{name}"
 
 df_Lc.to_csv(path, sep = ';', decimal = ',', header = "True", index = "True")
 ```
